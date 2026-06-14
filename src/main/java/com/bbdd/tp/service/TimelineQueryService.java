@@ -66,7 +66,6 @@ public class TimelineQueryService {
                                     int ryMin = region.getInteger("ymin");
                                     int ryMax = region.getInteger("ymax");
 
-                                    // Precision filtering on bounding box overlaps
                                     if (rxMax >= xmin && rxMin <= xmax && ryMax >= ymin && ryMin <= ymax) {
                                         matchingRegions.add(new TimelineQueryResult.RegionDetail(rxMin, rxMax, ryMin, ryMax));
                                     }

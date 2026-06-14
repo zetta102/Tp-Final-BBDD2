@@ -30,17 +30,10 @@ public class ComponentProvisioningService {
         this.mongoTransactionTemplate = mongoTransactionTemplate;
         this.jpaTransactionTemplate = jpaTransactionTemplate;
     }
+
     public void provisionWithSaga(ComponentProvisionRequest request) {
         jpaTransactionTemplate.execute(status -> {
-            ComponentEntity entity = new ComponentEntity();
-            entity.setComponentId(request.componentId());
-            entity.setTrackId(request.trackId());
-            entity.setEventRateNumerator(request.eventRateNumerator());
-            entity.setEventRateDenominator(request.eventRateDenominator());
-            entity.setXSize(request.xSize());
-            entity.setYSize(request.ySize());
-            entity.setMetadata("{\"algorithm\": \"" + request.algorithmName() + "\"}");
-            componentRepository.save(entity);
+            createComponentEntity(request);
             return null;
         });
 
@@ -54,17 +47,22 @@ public class ComponentProvisioningService {
             throw new RuntimeException("NoSQL document write failed. SQL catalog item removed by Saga compensation.", ex);
         }
     }
+
+    private void createComponentEntity(ComponentProvisionRequest request) {
+        ComponentEntity entity = new ComponentEntity();
+        entity.setComponentId(request.componentId());
+        entity.setTrackId(request.trackId());
+        entity.setEventRateNumerator(request.eventRateNumerator());
+        entity.setEventRateDenominator(request.eventRateDenominator());
+        entity.setXSize(request.xSize());
+        entity.setYSize(request.ySize());
+        entity.setMetadata("{\"algorithm\": \"" + request.algorithmName() + "\"}");
+        componentRepository.save(entity);
+    }
+
     public void provisionCoordinated(ComponentProvisionRequest request) {
         jpaTransactionTemplate.execute(status -> {
-            ComponentEntity entity = new ComponentEntity();
-            entity.setComponentId(request.componentId());
-            entity.setTrackId(request.trackId());
-            entity.setEventRateNumerator(request.eventRateNumerator());
-            entity.setEventRateDenominator(request.eventRateDenominator());
-            entity.setXSize(request.xSize());
-            entity.setYSize(request.ySize());
-            entity.setMetadata("{\"algorithm\": \"" + request.algorithmName() + "\"}");
-            componentRepository.save(entity);
+            createComponentEntity(request);
 
             mongoTransactionTemplate.execute(mongoStatus -> {
                 writeInitialBucketToMongo(request);

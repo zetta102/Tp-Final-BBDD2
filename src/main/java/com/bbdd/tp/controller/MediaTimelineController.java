@@ -3,6 +3,7 @@ package com.bbdd.tp.controller;
 import com.bbdd.tp.model.ComponentProvisionRequest;
 import com.bbdd.tp.model.TimelineQueryResult;
 import com.bbdd.tp.service.ComponentProvisioningService;
+import com.bbdd.tp.service.CoordinatedTransactionCoordinator;
 import com.bbdd.tp.service.TimelineQueryService;
 import org.jspecify.annotations.NullMarked;
 import org.springframework.http.HttpStatus;
@@ -19,11 +20,15 @@ public class MediaTimelineController {
 
     private final ComponentProvisioningService provisioningService;
     private final TimelineQueryService queryService;
+    private final CoordinatedTransactionCoordinator manualCoordinator;
 
     public MediaTimelineController(
-            ComponentProvisioningService provisioningService, TimelineQueryService queryService) {
+            ComponentProvisioningService provisioningService,
+            TimelineQueryService queryService,
+            CoordinatedTransactionCoordinator manualCoordinator) {
         this.provisioningService = provisioningService;
         this.queryService = queryService;
+        this.manualCoordinator = manualCoordinator;
     }
 
     @PostMapping(value = "/components", version = "1.0")
@@ -38,6 +43,13 @@ public class MediaTimelineController {
         provisioningService.provisionCoordinated(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body("ACID Transaction complete: Atomic dual-engine insert succeeded.");
+    }
+
+    @PostMapping(value = "/components", version = "3.0")
+    public ResponseEntity<String> provisionComponentManual(@RequestBody ComponentProvisionRequest request) throws Exception {
+        manualCoordinator.provisionComponentManual(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body("Manual JDBC/Mongo Transaction complete: Atomic dual-engine insert succeeded.");
     }
 
     @GetMapping(value = "/tracks/{trackId}/query", version = "1.0")
