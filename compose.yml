@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres_media
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: media_db
+      POSTGRES_USER: media_user
+      POSTGRES_PASSWORD: media_secure_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - media_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U media_user -d media_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:8.0
+    container_name: mongodb_media
+    ports:
+      - "27017:27017"
+    command: [ "--replSet", "rs0" ]
+    volumes:
+      - mongodata:/data/db
+    networks:
+      - media_network
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongodb-init:
+    image: mongo:8.0
+    container_name: mongodb_media_init
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - media_network
+    restart: "no"
+    entrypoint: >
+      mongosh --host mongodb:27017 --eval '
+        try {
+          if (!rs.status().ok) {
+            rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:27017"}]});
+          }
+        } catch (e) {
+          rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:27017"}]});
+        }
+      '
+
+volumes:
+  pgdata:
+    driver: local
+  mongodata:
+    driver: local
+
+networks:
+  media_network:
+    driver: bridge

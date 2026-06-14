@@ -1,3 +1,37 @@
 spring:
   application:
-    name: tp
+    name: media-timeline-service
+
+  # PostgreSQL Configuration
+  datasource:
+    url: jdbc:postgresql://${DB_POSTGRES_HOST:localhost}:${DB_POSTGRES_PORT:5432}/${DB_POSTGRES_NAME:media_db}
+    username: ${DB_POSTGRES_USER:media_user}
+    password: ${DB_POSTGRES_PASS:media_secure_password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+
+  # JPA & Hibernate 7.x Settings
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # NoSQL Configuration (Points to single-node replica set rs0)
+  # Spring Boot 4 / Spring 7 Native API Versioning
+  mvc:
+    apiversion:
+      supported: "1.0, 2.0"
+      default: "1.0"
+      use:
+        path-segment: 1
+  mongodb:
+    uri: mongodb://${DB_MONGO_HOST:localhost}:${DB_MONGO_PORT:27017}/${DB_MONGO_NAME:media_db}?replicaSet=rs0
+
+server:
+  port: 8080
