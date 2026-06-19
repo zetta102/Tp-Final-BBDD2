@@ -15,17 +15,44 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Service for executing spatio-temporal queries across the polyglot data store.
+ *
+ * <p>Combines a PostgreSQL lookup (to find components belonging to a track) with a
+ * MongoDB query (to find timeline bucket events matching a temporal range and a
+ * GeoJSON spatial bounding box on region centroids).</p>
+ */
 @Service
 public class TimelineQueryService {
 
     private final ComponentRepository componentRepository;
     private final MongoTemplate mongoTemplate;
 
+    /**
+     * @param componentRepository JPA repository for component catalog lookups
+     * @param mongoTemplate       session-aware MongoDB template for bucket queries
+     */
     public TimelineQueryService(ComponentRepository componentRepository, MongoTemplate mongoTemplate) {
         this.componentRepository = componentRepository;
         this.mongoTemplate = mongoTemplate;
     }
 
+    /**
+     * Queries the timeline for events matching both a temporal range and a spatial bounding box.
+     *
+     * <p>For each component in the given track, finds MongoDB buckets whose time windows
+     * overlap {@code [startTime, endTime)}, then filters individual events whose regions
+     * intersect the spatial bounding box defined by {@code (xmin, ymin)} to {@code (xmax, ymax)}.</p>
+     *
+     * @param trackId   the track to query components for
+     * @param startTime temporal range start in seconds
+     * @param endTime   temporal range end in seconds
+     * @param xmin      bounding box left edge in pixels
+     * @param xmax      bounding box right edge in pixels
+     * @param ymin      bounding box top edge in pixels
+     * @param ymax      bounding box bottom edge in pixels
+     * @return list of results per component, each containing matching events and regions
+     */
     public List<TimelineQueryResult> querySpatioTemporal(
             UUID trackId, double startTime, double endTime, int xmin, int xmax, int ymin, int ymax) {
 

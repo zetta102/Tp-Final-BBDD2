@@ -12,33 +12,55 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Service responsible for appending events into MongoDB timeline buckets.
+ *
+ * <p>Implements the Netflix Media Timeline <em>fixed-time-window bucket pattern</em>:
+ * events are routed to 60-second time windows, and buckets are split when they
+ * exceed {@value #MAX_EVENTS_PER_BUCKET} events.</p>
+ *
+ * <p>Each region within an ingested event is enriched with a GeoJSON {@code centroid}
+ * point to support {@code 2dsphere} spatial queries.</p>
+ */
 @Service
 public class EventIngestionService {
 
+    /** Duration of each fixed time window bucket in seconds. */
     private static final double BUCKET_WINDOW_SECONDS = 60.0;
+
+    /** Maximum number of events per bucket before triggering a split. */
     private static final int MAX_EVENTS_PER_BUCKET = 200;
 
     private final MongoTemplate mongoTemplate;
 
+    /**
+     * @param mongoTemplate the session-aware MongoDB template
+     */
     public EventIngestionService(MongoTemplate mongoTemplate) {
         this.mongoTemplate = mongoTemplate;
     }
 
+    /**
+     * Appends an event to the appropriate timeline bucket for the given component.
+     *
+     * <p>If no bucket exists for the event's time window, one is created automatically.
+     * After insertion, if the bucket exceeds the maximum event count, it is split into
+     * two buckets.</p>
+     *
+     * @param componentId the component to append the event to
+     * @param request     the event data including time range, description, and regions
+     */
     public void appendEvent(UUID componentId, EventIngestRequest request) {
         String componentIdStr = componentId.toString();
 
-        // Find the bucket whose fixed time window contains this event's startTime
         Document bucket = findBucketForTime(componentIdStr, request.startTime());
 
         if (bucket == null) {
-            // No bucket exists for this time window — create one
             bucket = createBucketForTime(componentIdStr, request.startTime());
         }
 
-        // Build the event document with GeoJSON centroid in each region
         Document eventDoc = buildEventDocument(request);
 
-        // Atomically push event and increment event_count
         Query query = new Query(Criteria.where("_id").is(bucket.getObjectId("_id")));
         Update update = new Update()
                 .push("events", eventDoc)
@@ -46,13 +68,19 @@ public class EventIngestionService {
 
         mongoTemplate.updateFirst(query, update, "timeline_buckets");
 
-        // Check if bucket needs splitting (overflow → new adjacent bucket)
         Document updated = mongoTemplate.findOne(query, Document.class, "timeline_buckets");
         if (updated != null && updated.getInteger("event_count", 0) > MAX_EVENTS_PER_BUCKET) {
             splitBucket(updated);
         }
     }
 
+    /**
+     * Finds the bucket matching the fixed time window that contains the given event time.
+     *
+     * @param componentId    the component identifier
+     * @param eventStartTime the event start time in seconds
+     * @return the matching bucket document, or {@code null} if none exists
+     */
     private Document findBucketForTime(String componentId, double eventStartTime) {
         double bucketStart = computeBucketStart(eventStartTime);
         double bucketEnd = bucketStart + BUCKET_WINDOW_SECONDS;
@@ -64,11 +92,17 @@ public class EventIngestionService {
         return mongoTemplate.findOne(query, Document.class, "timeline_buckets");
     }
 
+    /**
+     * Creates a new empty bucket for the time window containing the given event time.
+     *
+     * @param componentId    the component identifier
+     * @param eventStartTime the event start time used to determine the window
+     * @return the newly inserted bucket document
+     */
     private Document createBucketForTime(String componentId, double eventStartTime) {
         double bucketStart = computeBucketStart(eventStartTime);
         double bucketEnd = bucketStart + BUCKET_WINDOW_SECONDS;
 
-        // Determine the next bucket_id for this component
         Query countQuery = new Query(Criteria.where("component_id").is(componentId));
         long existingBuckets = mongoTemplate.count(countQuery, "timeline_buckets");
 
@@ -84,6 +118,13 @@ public class EventIngestionService {
         return bucketDoc;
     }
 
+    /**
+     * Builds a BSON event document from the request, enriching each region with a
+     * GeoJSON {@code Point} centroid computed from the bounding box center.
+     *
+     * @param request the event ingest request
+     * @return a BSON document ready for insertion into the bucket's {@code events} array
+     */
     private Document buildEventDocument(EventIngestRequest request) {
         List<Document> regionDocs = new ArrayList<>();
         for (EventIngestRequest.RegionInput region : request.regions()) {
@@ -112,9 +153,10 @@ public class EventIngestionService {
     }
 
     /**
-     * Splits a full bucket by moving overflow events into a new bucket.
-     * Uses the blog's fixed-time-window approach: the current bucket keeps
-     * MAX_EVENTS_PER_BUCKET events; overflow events are moved to adjacent windows.
+     * Splits a full bucket by keeping the first {@value #MAX_EVENTS_PER_BUCKET} events
+     * and moving overflow events into a new adjacent bucket.
+     *
+     * @param fullBucket the bucket document that has exceeded the event limit
      */
     private void splitBucket(Document fullBucket) {
         List<Document> events = fullBucket.getList("events", Document.class);
@@ -122,18 +164,15 @@ public class EventIngestionService {
             return;
         }
 
-        // Keep first MAX_EVENTS_PER_BUCKET events in current bucket, move the rest
         List<Document> keep = new ArrayList<>(events.subList(0, MAX_EVENTS_PER_BUCKET));
         List<Document> overflow = new ArrayList<>(events.subList(MAX_EVENTS_PER_BUCKET, events.size()));
 
-        // Update existing bucket to only keep the first N events
         Query query = new Query(Criteria.where("_id").is(fullBucket.getObjectId("_id")));
         Update update = new Update()
                 .set("events", keep)
                 .set("event_count", MAX_EVENTS_PER_BUCKET);
         mongoTemplate.updateFirst(query, update, "timeline_buckets");
 
-        // Create a new overflow bucket for the next time window
         String componentId = fullBucket.getString("component_id");
         double currentEnd = fullBucket.getDouble("bucket_end_time");
 
@@ -153,10 +192,12 @@ public class EventIngestionService {
 
     /**
      * Computes the start of the fixed time window containing the given time.
-     * Windows are [0, 60), [60, 120), [120, 180), ...
+     * Windows are {@code [0, 60)}, {@code [60, 120)}, {@code [120, 180)}, etc.
+     *
+     * @param time the time in seconds
+     * @return the bucket start time
      */
     private double computeBucketStart(double time) {
         return Math.floor(time / BUCKET_WINDOW_SECONDS) * BUCKET_WINDOW_SECONDS;
     }
 }
-
