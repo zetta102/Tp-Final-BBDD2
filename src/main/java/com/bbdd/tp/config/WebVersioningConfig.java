@@ -10,7 +10,7 @@ public class WebVersioningConfig implements WebMvcConfigurer {
     @Override
     public void configureApiVersioning(ApiVersionConfigurer configurer) {
         configurer
-                .addSupportedVersions("1.0", "2.0")
+                .addSupportedVersions("1.0", "2.0", "3.0")
                 .setDefaultVersion("1.0")
                 .usePathSegment(1); // Maps from segment index 1 (/api/{version}/...)
     }

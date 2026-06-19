@@ -4,7 +4,9 @@ import com.bbdd.tp.model.ComponentEntity;
 import com.bbdd.tp.model.TimelineQueryResult;
 import com.bbdd.tp.repository.ComponentRepository;
 import org.bson.Document;
+import org.springframework.data.geo.Point;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.geo.GeoJsonPolygon;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
@@ -30,9 +32,13 @@ public class TimelineQueryService {
         List<ComponentEntity> components = componentRepository.findByTrackId(trackId);
         List<TimelineQueryResult> results = new ArrayList<>();
 
-        org.springframework.data.geo.Box queryBox = new org.springframework.data.geo.Box(
-                new org.springframework.data.geo.Point(xmin, ymin),
-                new org.springframework.data.geo.Point(xmax, ymax)
+        // Build a GeoJSON polygon representing the bounding box for $geoWithin query
+        GeoJsonPolygon boundingBox = new GeoJsonPolygon(
+                new Point(xmin, ymin),
+                new Point(xmax, ymin),
+                new Point(xmax, ymax),
+                new Point(xmin, ymax),
+                new Point(xmin, ymin) // close the ring
         );
 
         for (ComponentEntity comp : components) {
@@ -42,7 +48,7 @@ public class TimelineQueryService {
             query.addCriteria(Criteria.where("component_id").is(componentIdStr)
                     .and("bucket_start_time").lt(endTime)
                     .and("bucket_end_time").gt(startTime)
-                    .and("events.regions.centroid").within(queryBox)
+                    .and("events.regions.centroid").within(boundingBox)
             );
 
             List<Document> buckets = mongoTemplate.find(query, Document.class, "timeline_buckets");

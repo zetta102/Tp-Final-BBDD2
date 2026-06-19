@@ -80,6 +80,7 @@ public class ComponentProvisioningService {
                 .append("bucket_id", 1)
                 .append("bucket_start_time", 0.0)
                 .append("bucket_end_time", 60.0)
+                .append("event_count", 0)
                 .append("events", new ArrayList<>());
 
         mongoTemplate.insert(bucketDoc, "timeline_buckets");
