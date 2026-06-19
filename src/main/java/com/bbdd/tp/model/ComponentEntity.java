@@ -7,29 +7,47 @@ import jakarta.persistence.Table;
 
 import java.util.UUID;
 
+/**
+ * JPA entity representing a component in the PostgreSQL catalog.
+ *
+ * <p>Maps to the {@code components} table, which stores structural metadata
+ * about media processing components (e.g., video analysis outputs). Each component
+ * belongs to a track and has an associated event rate and optional spatial dimensions.</p>
+ *
+ * <p>This entity participates in the "catalog" side of the polyglot persistence model,
+ * while the corresponding temporal event data is stored in MongoDB's
+ * {@code timeline_buckets} collection.</p>
+ */
 @Entity
 @Table(name = "components")
 public class ComponentEntity {
 
+    /** Unique identifier for this component (primary key). */
     @Id
     @Column(name = "component_id")
     private UUID componentId;
 
+    /** Track this component belongs to (foreign key to {@code tracks} table). */
     @Column(name = "track_id", nullable = false)
     private UUID trackId;
 
+    /** Numerator of the event rate rational number (e.g., 24000 for 23.976fps). */
     @Column(name = "event_rate_numerator", nullable = false)
     private int eventRateNumerator;
 
+    /** Denominator of the event rate rational number (e.g., 1001 for 23.976fps). */
     @Column(name = "event_rate_denominator", nullable = false)
     private int eventRateDenominator;
 
+    /** Horizontal resolution in pixels, or {@code null} for non-spatial components. */
     @Column(name = "x_size")
     private Integer xSize;
 
+    /** Vertical resolution in pixels, or {@code null} for non-spatial components. */
     @Column(name = "y_size")
     private Integer ySize;
 
+    /** JSONB metadata blob (e.g., algorithm configuration). */
     @Column(name = "metadata", columnDefinition = "jsonb")
     private String metadata;
 

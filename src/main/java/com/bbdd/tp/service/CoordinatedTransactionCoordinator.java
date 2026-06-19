@@ -17,17 +17,50 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 
+/**
+ * Service that provisions components using <em>manual, low-level transaction coordination</em>
+ * between PostgreSQL (raw JDBC) and MongoDB (native driver {@link ClientSession}).
+ *
+ * <p>Unlike the Spring-managed strategies in {@link ComponentProvisioningService}, this class
+ * bypasses Spring's transaction abstractions entirely and manages both database transactions
+ * by hand, providing explicit control over commit order and rollback behavior.</p>
+ *
+ * <h3>Transaction lifecycle</h3>
+ * <ol>
+ *   <li>Opens a JDBC {@link Connection} with auto-commit disabled.</li>
+ *   <li>Opens a MongoDB {@link ClientSession} and starts a transaction with
+ *       {@link ReadConcern#SNAPSHOT} / {@link WriteConcern#MAJORITY}.</li>
+ *   <li>Executes SQL INSERT and MongoDB insertOne within the respective sessions.</li>
+ *   <li>On success: commits Mongo first, then PostgreSQL.</li>
+ *   <li>On failure: explicitly rolls back both (JDBC {@code rollback()} and
+ *       Mongo {@code abortTransaction()}).</li>
+ * </ol>
+ */
 @Service
 public class CoordinatedTransactionCoordinator {
 
     private final DataSource pgDataSource;
     private final MongoClient mongoClient;
 
+    /**
+     * @param pgDataSource HikariCP-managed PostgreSQL data source
+     * @param mongoClient  MongoDB native driver client (requires replica set for transactions)
+     */
     public CoordinatedTransactionCoordinator(DataSource pgDataSource, MongoClient mongoClient) {
         this.pgDataSource = pgDataSource;
         this.mongoClient = mongoClient;
     }
 
+    /**
+     * Provisions a component by manually coordinating JDBC and MongoDB transactions.
+     *
+     * <p>Both connections are managed via try-with-resources. On any exception during
+     * the write phase, both transactions are explicitly rolled back before the exception
+     * is re-thrown.</p>
+     *
+     * @param request the component provisioning payload
+     * @throws Exception if either database write fails (after both are rolled back)
+     */
     public void provisionComponentManual(ComponentProvisionRequest request) throws Exception {
         try (Connection pgConn = pgDataSource.getConnection();
              ClientSession mongoSession = mongoClient.startSession()) {
