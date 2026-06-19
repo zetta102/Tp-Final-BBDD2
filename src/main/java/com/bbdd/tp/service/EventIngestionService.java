@@ -2,11 +2,13 @@ package com.bbdd.tp.service;
 
 import com.bbdd.tp.model.EventIngestRequest;
 import org.bson.Document;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,16 +34,23 @@ public class EventIngestionService {
     private static final int MAX_EVENTS_PER_BUCKET = 200;
 
     private final MongoTemplate mongoTemplate;
+    private final TransactionTemplate mongoTransactionTemplate;
 
     /**
-     * @param mongoTemplate the session-aware MongoDB template
+     * @param mongoTemplate            the session-aware MongoDB template
+     * @param mongoTransactionTemplate transaction template backed by {@code MongoTransactionManager}
      */
-    public EventIngestionService(MongoTemplate mongoTemplate) {
+    public EventIngestionService(MongoTemplate mongoTemplate,
+                                 @Qualifier("mongoTransactionTemplate") TransactionTemplate mongoTransactionTemplate) {
         this.mongoTemplate = mongoTemplate;
+        this.mongoTransactionTemplate = mongoTransactionTemplate;
     }
 
     /**
      * Appends an event to the appropriate timeline bucket for the given component.
+     *
+     * <p>The entire operation (bucket lookup/creation, event push, and potential bucket split)
+     * is executed within a MongoDB transaction to ensure atomicity.</p>
      *
      * <p>If no bucket exists for the event's time window, one is created automatically.
      * After insertion, if the bucket exceeds the maximum event count, it is split into
@@ -51,6 +60,16 @@ public class EventIngestionService {
      * @param request     the event data including time range, description, and regions
      */
     public void appendEvent(UUID componentId, EventIngestRequest request) {
+        mongoTransactionTemplate.execute(status -> {
+            appendEventInternal(componentId, request);
+            return null;
+        });
+    }
+
+    /**
+     * Internal implementation of event appending, executed within a MongoDB transaction.
+     */
+    private void appendEventInternal(UUID componentId, EventIngestRequest request) {
         String componentIdStr = componentId.toString();
 
         Document bucket = findBucketForTime(componentIdStr, request.startTime());

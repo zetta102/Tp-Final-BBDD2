@@ -9,6 +9,7 @@ import com.mongodb.client.ClientSession;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import org.bson.Document;
+import org.springframework.data.mongodb.MongoDatabaseFactory;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
@@ -41,14 +42,18 @@ public class CoordinatedTransactionCoordinator {
 
     private final DataSource pgDataSource;
     private final MongoClient mongoClient;
+    private final String mongoDatabaseName;
 
     /**
-     * @param pgDataSource HikariCP-managed PostgreSQL data source
-     * @param mongoClient  MongoDB native driver client (requires replica set for transactions)
+     * @param pgDataSource       HikariCP-managed PostgreSQL data source
+     * @param mongoClient        MongoDB native driver client (requires replica set for transactions)
+     * @param mongoDatabaseFactory Spring-managed factory used to resolve the configured database name
      */
-    public CoordinatedTransactionCoordinator(DataSource pgDataSource, MongoClient mongoClient) {
+    public CoordinatedTransactionCoordinator(DataSource pgDataSource, MongoClient mongoClient,
+                                             MongoDatabaseFactory mongoDatabaseFactory) {
         this.pgDataSource = pgDataSource;
         this.mongoClient = mongoClient;
+        this.mongoDatabaseName = mongoDatabaseFactory.getMongoDatabase().getName();
     }
 
     /**
@@ -95,7 +100,7 @@ public class CoordinatedTransactionCoordinator {
                 }
 
                 MongoCollection<Document> bucketCollection = mongoClient
-                        .getDatabase("media_db")
+                        .getDatabase(mongoDatabaseName)
                         .getCollection("timeline_buckets");
 
                 Document bucketDoc = new Document()
