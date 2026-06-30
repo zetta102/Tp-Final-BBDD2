@@ -1,6 +1,7 @@
-version: '3.8'
-
 services:
+  # ============================================
+  # PostgreSQL - Relational Data & Schema Management
+  # ============================================
   postgres:
     image: postgres:17-alpine
     container_name: postgres_media
@@ -12,6 +13,7 @@ services:
       POSTGRES_PASSWORD: media_secure_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./src/main/resources/db/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - media_network
     healthcheck:
@@ -20,6 +22,47 @@ services:
       timeout: 5s
       retries: 5
 
+  # ============================================
+  # Cassandra - Time-Series Event Data
+  # ============================================
+  cassandra:
+    image: cassandra:5.0
+    container_name: cassandra_media
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: MediaTimelineCluster
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    volumes:
+      - cassandradata:/var/lib/cassandra
+    networks:
+      - media_network
+    healthcheck:
+      test: [ "CMD-SHELL", "cqlsh -e 'describe cluster'" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  cassandra-init:
+    image: cassandra:5.0
+    container_name: cassandra_media_init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./src/main/resources/db/cassandra/init.cql:/init.cql:ro
+    networks:
+      - media_network
+    restart: "no"
+    entrypoint: [ "cqlsh", "cassandra", "-f", "/init.cql" ]
+
+  # ============================================
+  # MongoDB - Document Store & Spatial Queries
+  # ============================================
   mongodb:
     image: mongo:8.0
     container_name: mongodb_media
@@ -42,6 +85,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+    volumes:
+      - ./src/main/resources/db/mongodb/init.js:/init.js:ro
     networks:
       - media_network
     restart: "no"
@@ -54,10 +99,12 @@ services:
         } catch (e) {
           rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:27017"}]});
         }
-      '
+      ' && mongosh --host mongodb:27017 /init.js
 
 volumes:
   pgdata:
+    driver: local
+  cassandradata:
     driver: local
   mongodata:
     driver: local

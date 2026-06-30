@@ -1,0 +1,295 @@
+@startuml Netflix Media Document - Arquitectura de Base de Datos Políglota
+
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam roundcorner 8
+skinparam componentStyle rectangle
+
+title Netflix Media Document - Arquitectura de Persistencia Políglota\nBasado en el Modelo de Datos de Línea de Tiempo de Netflix MediaDatabase
+
+' ============================================
+' DEFINICIONES DE COLORES
+' ============================================
+!define POSTGRES_COLOR #336791
+!define CASSANDRA_COLOR #1287B1
+!define MONGODB_COLOR #4DB33D
+!define APP_COLOR #FF6B6B
+!define DATA_COLOR #FFF3CD
+
+' ============================================
+' MODELO DE DATOS MEDIA DOCUMENT (del Blog Técnico de Netflix)
+' ============================================
+
+package "Modelo Netflix Media Document" as DataModel #E8F4FD {
+    
+    class MediaDocument <<Entidad>> {
+        + id: UUID
+        + externalId: String
+        + schemaId: UUID
+        + documentType: String
+        + title: String
+        + metadata: JSON
+        --
+        Contiene tracks[]
+    }
+    
+    class Track <<Entidad>> {
+        + id: String
+        + metadata: JSON {type: video|audio|text}
+        --
+        Contiene components[]
+    }
+    
+    class Component <<Entidad>> {
+        + id: String
+        + eventRateNumerator: Integer
+        + eventRateDenominator: Integer
+        + xSize: Integer (ancho espacial)
+        + ySize: Integer (alto espacial)
+        + metadata: JSON
+        --
+        Contiene events[]
+    }
+    
+    class Event <<Entidad>> {
+        + startTime: Long
+        + endTime: Long
+        + metadata: JSON
+        --
+        Contiene regions[]
+    }
+    
+    class Region <<Entidad>> {
+        + xmin: Integer
+        + xmax: Integer
+        + ymin: Integer
+        + ymax: Integer
+    }
+    
+    class DocumentSchema <<Entidad>> {
+        + id: UUID
+        + schemaName: String
+        + version: String
+        + jsonSchema: JSON
+        + description: String
+    }
+    
+    MediaDocument "1" *-- "0..*" Track : contiene
+    Track "1" *-- "1..*" Component : contiene
+    Component "1" *-- "0..*" Event : contiene
+    Event "1" *-- "0..*" Region : contiene
+    MediaDocument "0..*" --> "1" DocumentSchema : valida contra
+}
+
+' ============================================
+' ARQUITECTURA DE BASE DE DATOS POLÍGLOTA
+' ============================================
+
+package "Capa de Persistencia Políglota" as Databases {
+    
+    ' Sección PostgreSQL
+    package "PostgreSQL" as PG <<Base de Datos>> #E8F0FE {
+        note as PG_Note
+            **Propósito**: Datos Maestros y Gestión de Esquemas
+            
+            **Fortalezas**:
+            • Transacciones ACID
+            • Integridad referencial
+            • Validación de esquemas
+            • JOINs complejos
+            
+            **Casos de Uso**:
+            • Catálogo de metadatos de documentos
+            • Registro de esquemas
+            • Consultas estructurales
+        end note
+        
+        entity "document_schemas" as DS {
+            * id : UUID <<PK>>
+            --
+            schema_name : VARCHAR
+            version : VARCHAR
+            json_schema : JSONB
+            description : TEXT
+        }
+        
+        entity "media_documents" as MD {
+            * id : UUID <<PK>>
+            --
+            external_id : VARCHAR <<UK>>
+            schema_id : UUID <<FK>>
+            document_type : VARCHAR
+            title : VARCHAR
+            metadata : JSONB
+        }
+        
+        entity "tracks" as TR {
+            * id : UUID <<PK>>
+            --
+            document_id : UUID <<FK>>
+            track_id : VARCHAR
+            track_type : VARCHAR
+            metadata : JSONB
+        }
+        
+        entity "components" as CO {
+            * id : UUID <<PK>>
+            --
+            track_id : UUID <<FK>>
+            component_id : VARCHAR
+            event_rate_numerator : INT
+            event_rate_denominator : INT
+            x_size : INT
+            y_size : INT
+            metadata : JSONB
+        }
+        
+        DS ||--o{ MD
+        MD ||--o{ TR
+        TR ||--o{ CO
+    }
+    
+    ' Sección Cassandra
+    package "Cassandra" as CASS <<Base de Datos>> #FFF8E1 {
+        note as CASS_Note
+            **Propósito**: Almacenamiento de Eventos en Series Temporales
+            
+            **Fortalezas**:
+            • Alto rendimiento de escritura
+            • Escalabilidad lineal
+            • Consultas eficientes de rangos de tiempo
+            • Distribución basada en particiones
+            
+            **Casos de Uso**:
+            • Obtener eventos en rango de tiempo
+            • Consultas temporales entre documentos
+            • Ingesta de streaming de eventos
+        end note
+        
+        entity "events_by_document" as EBD {
+            * document_id : UUID <<PK>>
+            * component_id : TEXT <<PK>>
+            * start_time : BIGINT <<CK>>
+            * event_id : UUID <<CK>>
+            --
+            end_time : BIGINT
+            event_type : TEXT
+            metadata : MAP<TEXT,TEXT>
+            regions : LIST<MAP>
+        }
+        
+        entity "events_by_time_range" as EBTR {
+            * event_type : TEXT <<PK>>
+            * time_bucket : TEXT <<PK>>
+            * created_at : TIMESTAMP <<CK>>
+            * event_id : UUID <<CK>>
+            --
+            document_id : UUID
+            start_time : BIGINT
+            end_time : BIGINT
+        }
+        
+        entity "events_with_regions" as EWR {
+            * document_id : UUID <<PK>>
+            * event_id : UUID <<CK>>
+            --
+            region_xmin : INT
+            region_xmax : INT
+            region_ymin : INT
+            region_ymax : INT
+        }
+    }
+    
+    ' Sección MongoDB
+    package "MongoDB" as MONGO <<Base de Datos>> #E8F5E9 {
+        note as MONGO_Note
+            **Propósito**: Almacenamiento de Documentos Completos y Consultas Espaciales
+            
+            **Fortalezas**:
+            • Documentos anidados flexibles
+            • Almacenamiento nativo JSON
+            • Índices geoespaciales
+            • Pipelines de agregación
+            
+            **Casos de Uso**:
+            • Almacenar Media Documents completos
+            • Consultas espacio-temporales
+            • Análisis específicos del dominio
+        end note
+        
+        entity "media_documents" as MMD {
+            * _id : UUID <<PK>>
+            --
+            externalId : String <<UK>>
+            documentType : String
+            metadata : Object
+            tracks[] : Array
+              └─ components[] : Array
+                   └─ events[] : Array
+                        └─ regions[] : Array
+        }
+        
+        entity "document_schemas" as MDS {
+            * _id : UUID <<PK>>
+            --
+            schemaName : String <<UK>>
+            jsonSchema : Object
+        }
+    }
+}
+
+' ============================================
+' CAPA DE APLICACIÓN
+' ============================================
+
+package "Capa de Aplicación" as App #FFE4E1 {
+    
+    component "Servicio de Línea de Tiempo de Media" as MTS {
+    }
+    
+    component "Enrutador de Consultas" as QR {
+    }
+    
+    note as AppNote
+        **Lógica de Enrutamiento de Consultas**:
+        
+        • **Consultas estructurales** → PostgreSQL
+          "Obtener todas las pistas del documento X"
+          
+        • **Consultas temporales** → Cassandra
+          "Obtener eventos entre T1 y T2"
+          
+        • **Consultas espaciales** → MongoDB
+          "Encontrar rostros en región de pantalla"
+          
+        • **Recuperación de documento completo** → MongoDB
+          "Obtener Media Document completo"
+    end note
+}
+
+' ============================================
+' RELACIONES
+' ============================================
+
+MTS --> QR
+QR --> PG : Consultas\nestructurales
+QR --> CASS : Consultas\ntemporales
+QR --> MONGO : Consultas espaciales\ny de documentos
+
+' ============================================
+' LEYENDA
+' ============================================
+
+legend right
+    |= Símbolo |= Significado |
+    | <<PK>> | Clave Primaria |
+    | <<CK>> | Clave de Clustering |
+    | <<FK>> | Clave Foránea |
+    | <<UK>> | Clave Única |
+    | JSONB | JSON Binario (PostgreSQL) |
+    | MAP | Mapa Clave-Valor (Cassandra) |
+endlegend
+
+@enduml

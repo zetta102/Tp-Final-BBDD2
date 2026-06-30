@@ -16,22 +16,32 @@ spring:
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: update
+      ddl-auto: none  # Schema managed by init.sql
     show-sql: true
     properties:
       hibernate:
         format_sql: true
 
-  # NoSQL Configuration (Points to single-node replica set rs0)
-  # Spring Boot 4 / Spring 7 Native API Versioning
+  # Cassandra Configuration
+  cassandra:
+    keyspace-name: media_timeline
+    contact-points: ${DB_CASSANDRA_HOST:localhost}
+    port: ${DB_CASSANDRA_PORT:9042}
+    local-datacenter: datacenter1
+    schema-action: none  # Schema managed by init.cql
+
+  # MongoDB Configuration
+  data:
+    mongodb:
+      uri: mongodb://${DB_MONGO_HOST:localhost}:${DB_MONGO_PORT:27017}/${DB_MONGO_NAME:media_db}?replicaSet=rs0
+
+  # Spring Boot API Versioning
   mvc:
     apiversion:
       supported: "1.0, 2.0, 3.0"
       default: "1.0"
       use:
         path-segment: 1
-  mongodb:
-    uri: mongodb://${DB_MONGO_HOST:localhost}:${DB_MONGO_PORT:27017}/${DB_MONGO_NAME:media_db}?replicaSet=rs0
 
 server:
   port: 8080

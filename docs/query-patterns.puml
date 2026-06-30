@@ -1,0 +1,240 @@
+@startuml Netflix Media Document - Patrones de Consulta y Flujo de Datos
+
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Arial
+skinparam defaultFontSize 10
+skinparam roundcorner 8
+
+title Netflix Media Document - Patrones de Consulta por Base de Datos\nOptimizado para Diferentes Patrones de Acceso
+
+' ============================================
+' PATRONES DE CONSULTA POSTGRESQL
+' ============================================
+
+package "Consultas PostgreSQL" as PG_Queries #E8F0FE {
+    
+    note as PG_Q1 #DDEEFF
+        **Consulta 1: Obtener Estructura del Documento**
+        --
+        SELECT md.title, t.track_type, 
+               c.component_id, c.x_size, c.y_size
+        FROM media_documents md
+        JOIN tracks t ON t.document_id = md.id
+        JOIN components c ON c.track_id = t.id
+        WHERE md.external_id = 'NMDB-ST-S4E1-001';
+        
+        **Caso de Uso**: Entender la jerarquía del documento
+        **Rendimiento**: O(1) con índice en external_id
+    end note
+    
+    note as PG_Q2 #DDEEFF
+        **Consulta 2: Encontrar Documentos por Esquema**
+        --
+        SELECT md.title, ds.schema_name, ds.version
+        FROM media_documents md
+        JOIN document_schemas ds ON ds.id = md.schema_id
+        WHERE ds.schema_name = 'video_face_detection';
+        
+        **Caso de Uso**: Filtrado basado en esquema
+        **Rendimiento**: O(log n) con índice FK
+    end note
+    
+    note as PG_Q3 #DDEEFF
+        **Consulta 3: Búsqueda en Metadatos (JSONB)**
+        --
+        SELECT * FROM media_documents 
+        WHERE metadata->>'series' = 'Stranger Things'
+          AND (metadata->>'season')::int = 4;
+        
+        **Caso de Uso**: Consultas flexibles de metadatos
+        **Rendimiento**: Índice GIN en metadata
+    end note
+    
+    note as PG_Q4 #DDEEFF
+        **Consulta 4: Análisis de Tasa de Frames**
+        --
+        SELECT title, component_id,
+               event_rate_numerator::float / 
+               event_rate_denominator as fps
+        FROM components c
+        JOIN tracks t ON t.id = c.track_id
+        JOIN media_documents md ON md.id = t.document_id
+        WHERE event_rate_numerator = 24000;
+        
+        **Caso de Uso**: Especificaciones técnicas
+        **Rendimiento**: Escaneo de índice + JOIN
+    end note
+}
+
+' ============================================
+' PATRONES DE CONSULTA CASSANDRA
+' ============================================
+
+package "Consultas Cassandra" as CASS_Queries #FFF8E1 {
+    
+    note as CASS_Q1 #FFF5CC
+        **Consulta 1: Eventos en Rango de Tiempo (Documento Único)**
+        --
+        SELECT * FROM events_by_document 
+        WHERE document_id = 11111111-...
+          AND component_id = '0'
+          AND start_time >= 0 
+          AND start_time <= 100;
+        
+        **Caso de Uso**: Análisis a nivel de frame
+        **Rendimiento**: O(log n) escaneo de partición
+        **Clave de Partición**: (document_id, component_id)
+        **Clustering**: start_time ASC
+    end note
+    
+    note as CASS_Q2 #FFF5CC
+        **Consulta 2: Búsqueda de Eventos Entre Documentos**
+        --
+        SELECT * FROM events_by_time_range 
+        WHERE event_type = 'face_detection' 
+          AND time_bucket = '2024-01-15-10';
+        
+        **Caso de Uso**: Encontrar todos los eventos de un tipo en ventana de tiempo
+        **Rendimiento**: Lectura de partición única
+        **Bucketing**: Buckets por hora para escalabilidad
+    end note
+    
+    note as CASS_Q3 #FFF5CC
+        **Consulta 3: Eventos Recientes (Ordenados por Tiempo)**
+        --
+        SELECT * FROM events_by_time_range 
+        WHERE event_type = 'subtitle'
+          AND time_bucket = '2024-01-15-10'
+        ORDER BY created_at DESC
+        LIMIT 50;
+        
+        **Caso de Uso**: Eventos más recientes primero
+        **Rendimiento**: Optimización de orden de clustering
+    end note
+    
+    note as CASS_Q4 #FFF5CC
+        **Consulta 4: Filtro de Región Espacial**
+        --
+        SELECT * FROM events_with_regions 
+        WHERE document_id = 11111111-...
+          AND region_xmin >= 960 
+        ALLOW FILTERING;
+        
+        **Caso de Uso**: Encontrar eventos en región de pantalla
+        **Nota**: ALLOW FILTERING para filtro secundario
+    end note
+}
+
+' ============================================
+' PATRONES DE CONSULTA MONGODB
+' ============================================
+
+package "Consultas MongoDB" as MONGO_Queries #E8F5E9 {
+    
+    note as MONGO_Q1 #D4EDDA
+        **Consulta 1: Consulta Espacio-Temporal**
+        --
+        db.media_documents.aggregate([
+          { $match: { documentType: "video_face_detection" }},
+          { $unwind: "$tracks" },
+          { $unwind: "$tracks.components" },
+          { $unwind: "$tracks.components.events" },
+          { $match: {
+              "tracks.components.events.startTime": { $lte: 150 },
+              "tracks.components.events.endTime": { $gte: 50 }
+          }},
+          { $unwind: "$tracks.components.events.regions" },
+          { $match: {
+              "tracks.components.events.regions.xmin": { $gte: 500 },
+              "tracks.components.events.regions.xmax": { $lte: 1500 }
+          }}
+        ]);
+        
+        **Caso de Uso**: Encontrar rostros en el centro de la pantalla durante tiempo específico
+        **Rendimiento**: Índice compuesto + pipeline de agregación
+    end note
+    
+    note as MONGO_Q2 #D4EDDA
+        **Consulta 2: Verificación de Subtítulos Multi-idioma**
+        --
+        db.media_documents.aggregate([
+          { $match: { documentType: "subtitle_ttml" }},
+          { $unwind: "$tracks.components.events" },
+          { $match: {
+              "tracks.components.events.startTime": { $lte: 15 },
+              "tracks.components.events.endTime": { $gte: 0 }
+          }},
+          { $group: {
+              _id: "$metadata.language",
+              subtitles: { $push: "$tracks.components.events.metadata.subtitle" }
+          }}
+        ]);
+        
+        **Caso de Uso**: Comparar subtítulos entre idiomas
+        **Rendimiento**: Escaneo de documentos con agregación
+    end note
+    
+    note as MONGO_Q3 #D4EDDA
+        **Consulta 3: Detección de Problemas de Calidad**
+        --
+        db.media_documents.aggregate([
+          { $match: { documentType: "vmaf_quality" }},
+          { $unwind: "$tracks.components.events" },
+          { $match: { 
+              "tracks.components.events.metadata.vmaf": { $lt: 90 }
+          }},
+          { $project: {
+              startTime: "$tracks.components.events.startTime",
+              vmaf: "$tracks.components.events.metadata.vmaf",
+              motion: "$tracks.components.events.metadata.motion"
+          }}
+        ]);
+        
+        **Caso de Uso**: Encontrar segmentos de video de baja calidad
+        **Rendimiento**: Índice en campo vmaf para filtrado
+    end note
+    
+    note as MONGO_Q4 #D4EDDA
+        **Consulta 4: Recuperación de Documento Completo**
+        --
+        db.media_documents.findOne({
+          externalId: "NMDB-ST-S4E1-001"
+        });
+        
+        **Caso de Uso**: Obtener documento anidado completo
+        **Rendimiento**: O(1) con índice único
+        **Beneficio**: Lectura única para toda la jerarquía
+    end note
+}
+
+' ============================================
+' DIAGRAMA DE FLUJO DE DATOS
+' ============================================
+
+package "Flujo de Datos" as Flow #F5F5F5 {
+    
+    rectangle "Pipeline de\nProcesamiento de Media" as Pipeline #FFB6C1
+    rectangle "Servicio de\nIngesta" as Ingest #87CEEB
+    
+    database "PostgreSQL" as PG_DB #336791
+    database "Cassandra" as CASS_DB #1287B1
+    database "MongoDB" as MONGO_DB #4DB33D
+    
+    rectangle "Enrutador de\nConsultas" as Router #DDA0DD
+    rectangle "Gateway\nAPI" as API #98FB98
+    
+    Pipeline --> Ingest : Media Document\n(JSON)
+    
+    Ingest --> PG_DB : 1. Metadatos del documento\n   Validación de esquema\n   Estructura Pista/Componente
+    Ingest --> CASS_DB : 2. Eventos\n   (desnormalizados para\n   consultas temporales)
+    Ingest --> MONGO_DB : 3. Documento completo\n   (estructura anidada)
+    
+    API --> Router : Solicitud de consulta
+    
+    Router --> PG_DB : Consultas estructurales\nJOINs, búsqueda de esquema
+    Router --> CASS_DB : Consultas temporales\nEscaneos de rango de tiempo
+    Router --> MONGO_DB : Consultas espaciales\nRecuperación de documentos
+}
+
+@enduml
